@@ -254,7 +254,7 @@ with tab2:
 
     # Colour-code significant rows
     def _highlight(row: pd.Series) -> list[str]:
-        color = "background-color: #d4edda" if row["significant"] else "background-color: #f8d7da"
+        color = "background-color: #d4edda" if row["Significant"] else "background-color: #f8d7da"
         return [color] * len(row)
 
     display_df = stats_df[["test", "statistic", "p_value", "significant", "interpretation"]].copy()

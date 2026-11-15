@@ -138,18 +138,32 @@ def _clean_cost(series: pd.Series) -> pd.Series:
 def load_and_clean() -> pd.DataFrame:
     if os.path.exists(RAW_CSV):
         df = pd.read_csv(RAW_CSV, low_memory=False)
-        # Drop bulky columns if present
-        df.drop(columns=[c for c in BULKY_COLS if c in df.columns], inplace=True)
+        
+        # Clean column names by stripping trailing/leading whitespaces
+        df.columns = df.columns.str.strip()
+        
+        # Find cost column dynamically
+        cost_col = None
+        for col in df.columns:
+            if "cost" in col.lower() and ("two" in col.lower() or "approx" in col.lower()):
+                cost_col = col
+                break
+        
+        if cost_col and cost_col != "approx_cost(for two)":
+            df.rename(columns={cost_col: "approx_cost(for two)"}, inplace=True)
+            
         # Keep only schema columns that exist
         present = [c for c in KEEP_COLS if c in df.columns]
         df = df[present].copy()
     else:
-        print("[data_loader] Raw CSV not found – generating 5 000-row fallback dataset.")
+        print("[data_loader] Raw CSV not found — generating 5,000-row fallback dataset.")
         df = _generate_fallback(5000)
 
     # --- Clean numeric fields ---
-    df["rate"] = _clean_rate(df["rate"])
-    df["approx_cost(for two)"] = _clean_cost(df["approx_cost(for two)"])
+    if "rate" in df.columns:
+        df["rate"] = _clean_rate(df["rate"])
+    if "approx_cost(for two)" in df.columns:
+        df["approx_cost(for two)"] = _clean_cost(df["approx_cost(for two)"])
 
     # --- Normalise binary columns ---
     for col in ["online_order", "book_table"]:

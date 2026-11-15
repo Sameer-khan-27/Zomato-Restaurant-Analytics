@@ -36,7 +36,7 @@ _SQL_TOP_RESTAURANTS = textwrap.dedent("""
     )
     SELECT
         t.location,
-        t.name                      AS top_restaurant,
+        t.name                       AS top_restaurant,
         t.votes,
         t.rate,
         t.cost_tier,
@@ -51,7 +51,7 @@ _SQL_ONLINE_ADOPTION = textwrap.dedent("""
     WITH online_stats AS (
         SELECT
             location,
-            COUNT(*)                                                AS total,
+            COUNT(*)                                               AS total,
             SUM(CASE WHEN online_order = 'Yes' THEN 1 ELSE 0 END)  AS online_count
         FROM   restaurants
         GROUP  BY location
@@ -96,17 +96,17 @@ _SQL_FULL_WINDOW = textwrap.dedent("""
         location,
         rate,
         votes,
-        "approx_cost(for two)"                                                  AS cost,
+        "approx_cost(for two)"                                                 AS cost,
         CASE
             WHEN "approx_cost(for two)" < 300  THEN 'Budget'
             WHEN "approx_cost(for two)" < 700  THEN 'Mid-Range'
             WHEN "approx_cost(for two)" < 1200 THEN 'Premium'
             ELSE                                    'Luxury'
-        END                                                                      AS cost_tier,
-        DENSE_RANK() OVER (PARTITION BY location ORDER BY votes DESC)            AS rank_in_location,
-        NTILE(4)     OVER (ORDER BY votes DESC)                                  AS votes_quartile,
-        ROUND(AVG(rate) OVER (PARTITION BY location), 2)                         AS avg_rating_in_location,
-        ROUND(AVG("approx_cost(for two)") OVER (PARTITION BY location), 0)       AS avg_cost_in_location
+        END                                                                    AS cost_tier,
+        DENSE_RANK() OVER (PARTITION BY location ORDER BY votes DESC)          AS rank_in_location,
+        NTILE(4)     OVER (ORDER BY votes DESC)                                AS votes_quartile,
+        ROUND(AVG(rate) OVER (PARTITION BY location), 2)                       AS avg_rating_in_location,
+        ROUND(AVG("approx_cost(for two)") OVER (PARTITION BY location), 0)     AS avg_cost_in_location
     FROM restaurants
     ORDER BY location, rank_in_location
     LIMIT 500;
@@ -122,24 +122,40 @@ def _get_connection(parquet_path: str = PARQUET_PATH) -> sqlite3.Connection:
     if not os.path.exists(parquet_path):
         raise FileNotFoundError(
             f"Processed parquet not found at {parquet_path}.\n"
-            "Run:  python data/data_loader.py"
+            "Run: python data/data_loader.py"
         )
     df = pd.read_parquet(parquet_path)
     con = sqlite3.connect(":memory:")
     df.to_sql("restaurants", con, if_exists="replace", index=False)
 
-    # Create views from SQL file
-    with open(SQL_PATH, "r", encoding="utf-8") as fh:
-        raw_sql = fh.read()
+    # Force-add restaurant_id using SQLite rowid
+    try:
+        con.execute("ALTER TABLE restaurants ADD COLUMN restaurant_id INTEGER;")
+        con.execute("UPDATE restaurants SET restaurant_id = rowid;")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
-    # Execute only CREATE VIEW statements (skip bare SELECTs / CTEs)
-    for statement in raw_sql.split(";"):
-        stmt = statement.strip()
-        if stmt.upper().startswith("CREATE VIEW"):
-            try:
-                con.execute(stmt)
-            except sqlite3.OperationalError:
-                pass  # view may already exist
+    con.execute("""
+        CREATE VIEW IF NOT EXISTS v_ranked_by_location AS
+        SELECT
+            restaurant_id,
+            name,
+            location,
+            rate,
+            votes,
+            "approx_cost(for two)" AS cost,
+            CASE
+                WHEN "approx_cost(for two)" < 300  THEN 'Budget'
+                WHEN "approx_cost(for two)" < 700  THEN 'Mid-Range'
+                WHEN "approx_cost(for two)" < 1200 THEN 'Premium'
+                ELSE                                    'Luxury'
+            END AS cost_tier,
+            DENSE_RANK() OVER (PARTITION BY location ORDER BY votes DESC)      AS rank_in_location,
+            ROUND(AVG(rate) OVER (PARTITION BY location), 2)                   AS avg_rating_in_location,
+            ROUND(AVG("approx_cost(for two)") OVER (PARTITION BY location), 0) AS avg_cost_in_location
+        FROM restaurants;
+    """)
     con.commit()
     return con
 
